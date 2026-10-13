@@ -439,19 +439,36 @@ Zoe</textarea>
   const sound = {
     ctx: null,
     muted: store.get('muted', false),
+    // Create/resume the context. Must be called from a user gesture (click,
+    // key, touch) or browsers keep it suspended. Resolves once it is running
+    // or after a short timeout, so callers can await it without hanging.
     unlock() {
-      if (this.muted) return;
+      if (this.muted) return Promise.resolve(false);
       if (!this.ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
+        if (!AC) return Promise.resolve(false);
         this.ctx = new AC();
         this.master = this.ctx.createGain();
         this.master.gain.value = 0.5;
         this.master.connect(this.ctx.destination);
+        this.ctx.addEventListener('statechange', () => this.refreshButton());
       }
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+      const p = this.ctx.state === 'running' ? Promise.resolve() : this.ctx.resume().catch(() => {});
+      return Promise.race([p, new Promise(r => setTimeout(r, 400))])
+        .then(() => { this.refreshButton(); return this.ctx.state === 'running'; });
     },
-    ok() { return !this.muted && this.ctx && this.ctx.state === 'running'; },
+    ok() {
+      if (this.muted || !this.ctx) return false;
+      if (this.ctx.state !== 'running') { this.ctx.resume().catch(() => {}); return false; }
+      return true;
+    },
+    blocked() { return !this.muted && (!this.ctx || this.ctx.state !== 'running'); },
+    refreshButton() {
+      if (this.muted) { muteBtn.textContent = '🔇 Muted'; muteBtn.title = 'Unmute sound'; }
+      else if (this.ctx && this.ctx.state === 'running') { muteBtn.textContent = '🔊 Sound'; muteBtn.title = 'Mute sound'; }
+      else { muteBtn.textContent = '🔈 Enable sound'; muteBtn.title = 'Your browser needs a click to allow sound'; }
+      muteBtn.setAttribute('aria-pressed', String(this.muted));
+    },
     tone(freq, dur, { type = 'sine', gain = 0.3, slide = 0, at = 0 } = {}) {
       if (!this.ok()) return;
       const t0 = this.ctx.currentTime + at;
@@ -516,16 +533,21 @@ Zoe</textarea>
         this.tone(n / 2, durs[i], { type: 'triangle', gain: 0.12, at: times[i] });
       });
     },
-    setMuted(m) {
+    setMuted(m, { unlock = true } = {}) {
       this.muted = m; store.set('muted', m);
-      muteBtn.textContent = m ? '🔇 Muted' : '🔊 Sound';
-      muteBtn.setAttribute('aria-pressed', String(m));
-      muteBtn.title = m ? 'Unmute sound' : 'Mute sound';
-      if (!m) this.unlock();
+      this.refreshButton();
+      if (!m && unlock) this.unlock().then(() => this.tick());
     },
   };
-  sound.setMuted(sound.muted);
-  muteBtn.addEventListener('click', () => sound.setMuted(!sound.muted));
+  sound.setMuted(sound.muted, { unlock: false });   // no gesture yet: just label the button
+  muteBtn.addEventListener('click', () => {
+    // Unmuted but blocked by the browser? This click is the gesture that fixes it.
+    if (!sound.muted && sound.blocked()) { sound.unlock().then(() => sound.tick()); return; }
+    sound.setMuted(!sound.muted);
+  });
+  // Any first interaction with the page is a chance to unlock audio early.
+  ['pointerdown', 'keydown', 'touchstart'].forEach(ev =>
+    document.addEventListener(ev, () => { if (!sound.muted) sound.unlock(); }, { passive: true }));
 
   // ---------- Duck designs ----------
   const PALETTES = [
@@ -822,7 +844,7 @@ Zoe</textarea>
 
   async function startRace() {
     if (racing) return;
-    sound.unlock();
+    const unlocking = sound.unlock();
     const n = layout();
     if (n < 2) return;
     racing = true; paused = false;
@@ -840,6 +862,7 @@ Zoe</textarea>
     placeHazards(L);
     if (ducks.some(d => d.design.legendary)) commentary.say('legend', '', { force: true });
 
+    await unlocking;
     await showCountdown('3');
     await showCountdown('2');
     await showCountdown('1');
