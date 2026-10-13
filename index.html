@@ -126,15 +126,29 @@
     mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
     animation: drift 6s linear infinite;
   }
-  @keyframes drift { from { background-position: 0 0; } to { background-position: 0 23px; } }
+  @keyframes drift { from { background-position: var(--px, 0px) 0; } to { background-position: var(--px, 0px) 23px; } }
+  .pond .reeds {
+    position: absolute; inset: 0; pointer-events: none; opacity: .18;
+    background-image: radial-gradient(ellipse 60px 10px at 50% 100%, rgba(255,255,255,.9), transparent 70%);
+    background-size: 340px 100%; background-repeat: repeat-x;
+    background-position: var(--px2, 0px) 0;
+  }
+  .lanes { position: absolute; inset: 0; z-index: 1; }
+  .lane { position: absolute; left: 0; right: 0; border-bottom: 1px dashed var(--lane); }
+  /* Everything in race coordinates lives in .world; the camera moves it. */
+  .world { position: absolute; inset: 0; z-index: 2; will-change: transform; }
+  .startline {
+    position: absolute; top: 0; bottom: 0; width: 4px;
+    background: repeating-linear-gradient(180deg, rgba(255,255,255,.85) 0 10px, transparent 10px 20px);
+    opacity: .7;
+  }
+  .startline::after { content: '🚩'; position: absolute; top: 6px; left: 6px; font-size: 22px; }
   .finish {
-    position: absolute; top: 0; bottom: 0; right: 56px; width: 14px;
+    position: absolute; top: 0; bottom: 0; width: 14px;
     background: repeating-conic-gradient(#111 0 25%, #fff 0 50%) 0 0 / 14px 14px;
     opacity: .9;
   }
-  .finish-flag { position: absolute; top: 8px; right: 14px; font-size: 26px; filter: drop-shadow(0 2px 2px rgba(0,0,0,.3)); }
-  .lanes { position: absolute; inset: 0; z-index: 2; }
-  .lane { position: absolute; left: 0; right: 0; border-bottom: 1px dashed var(--lane); }
+  .finish-flag { position: absolute; top: 8px; font-size: 26px; filter: drop-shadow(0 2px 2px rgba(0,0,0,.3)); }
 
   /* Obstacles & power-ups */
   .current {
@@ -369,9 +383,9 @@ Zoe</textarea>
 
     <div class="pond" id="pond">
       <div class="waves"></div>
+      <div class="reeds"></div>
       <div class="lanes" id="lanes"></div>
-      <div class="finish"></div>
-      <div class="finish-flag" aria-hidden="true">🏁</div>
+      <div class="world" id="world"></div>
       <div class="countdown" id="countdown" aria-hidden="true"></div>
       <div class="photo" id="photo" aria-hidden="true">📸 PHOTO FINISH · slow-mo replay</div>
       <div class="banner" id="banner" aria-hidden="true">
@@ -412,6 +426,7 @@ Zoe</textarea>
 
   const pond = $('#pond');
   const lanesEl = $('#lanes');
+  const worldEl = $('#world');
   const namesEl = $('#names');
   const namesWarn = $('#names-warn');
   const durationEl = $('#duration');
@@ -727,8 +742,10 @@ Zoe</textarea>
   function layout() {
     const names = readNames();
     lanesEl.innerHTML = '';
+    worldEl.innerHTML = '';
     boardEl.innerHTML = '';
     ducks = [];
+    setCamera(0);
     const n = names.length;
     const laneH = clamp(Math.floor(520 / Math.max(n, 1)), 44, 90);
     const duckSize = clamp(laneH - 12, 36, 64);
@@ -751,7 +768,7 @@ Zoe</textarea>
       el.style.setProperty('--bob', rand(0.8, 1.3).toFixed(2) + 's');
       el.style.setProperty('--tag-size', tagSize(name));
       el.innerHTML = `<div class="wake"></div><div class="ripple"></div><div class="body">${duckSVG(design)}</div><div class="tag" aria-hidden="true">${design.legendary ? '✨ ' : ''}${escapeHtml(name)}</div>`;
-      lanesEl.appendChild(el);
+      worldEl.appendChild(el);
 
       const row = document.createElement('li');
       row.innerHTML = `<span class="rank">${i + 1}</span><span class="mini ${design.cls}">${duckSVG(design)}</span><span class="bname">${escapeHtml(name)}</span>`;
@@ -761,19 +778,48 @@ Zoe</textarea>
       ducks.push({ name, el, row, design, laneTop: 12 + i * laneH, laneH, size: duckSize, x: 0, finished: false, place: 0, pads: [], current: null });
     });
 
+    placeTrack(trackLength());
     raceBtn.disabled = n < 2;
     return n;
   }
 
+  // The track is longer than the pond; a camera follows the pack. Speed on
+  // screen stays pleasant whatever the race time.
   function trackLength() {
-    const duckW = ducks[0] ? ducks[0].size : 64;
-    return pond.clientWidth - 56 - duckW + 10;
+    return Math.max(2.5 * pond.clientWidth, readDuration() * 110);
+  }
+  function duckW() { return ducks[0] ? ducks[0].size : 64; }
+  function billOffset() { return duckW() * 0.8; }   // where the bill is, relative to d.x
+
+  // Camera in race coordinates: screen x = race x - cam.
+  let cam = 0;
+  function setCamera(x) {
+    cam = x;
+    worldEl.style.transform = `translate3d(${-x}px,0,0)`;
+    pond.style.setProperty('--px', (-x * 0.35).toFixed(1) + 'px');
+    pond.style.setProperty('--px2', (-x * 0.7).toFixed(1) + 'px');
+  }
+  function cameraMax(L) { return Math.max(0, L + billOffset() + 70 - pond.clientWidth); }
+  function cameraTarget(L, leadX) { return clamp(leadX - pond.clientWidth * 0.6, 0, cameraMax(L)); }
+
+  function placeTrack(L) {
+    worldEl.querySelectorAll('.startline, .finish, .finish-flag').forEach(e => e.remove());
+    const start = document.createElement('div');
+    start.className = 'startline';
+    start.style.left = (billOffset() + 2) + 'px';
+    const fin = document.createElement('div');
+    fin.className = 'finish';
+    fin.style.left = (L + billOffset()) + 'px';
+    const flag = document.createElement('div');
+    flag.className = 'finish-flag'; flag.setAttribute('aria-hidden', 'true'); flag.textContent = '🏁';
+    flag.style.left = (L + billOffset() + 22) + 'px';
+    worldEl.prepend(flag); worldEl.prepend(fin); worldEl.prepend(start);
   }
 
   // Obstacles & power-ups. All sit before 70% of the track so the finish is
   // decided by the pre-drawn late surge, not by a lucky lily pad.
   function placeHazards(L) {
-    lanesEl.querySelectorAll('.pad, .current').forEach(e => e.remove());
+    worldEl.querySelectorAll('.pad, .current').forEach(e => e.remove());
     ducks.forEach(d => { d.pads = []; d.current = null; d.hitPads = new Set(); d.inCurrent = false; d.slowUntil = 0; });
     if (!hazardsEl.checked) return;
     const currentLanes = new Set();
@@ -791,18 +837,18 @@ Zoe</textarea>
         pad.style.left = (p * L + d.size * 0.8) + 'px';
         pad.style.top = (cy + rand(-4, 4)) + 'px';
         pad.innerHTML = `<svg viewBox="0 0 34 30" aria-hidden="true"><ellipse cx="17" cy="16" rx="16" ry="12" fill="#3fa34d"/><path d="M17 16 L33 10 A16 12 0 0 0 31 7 Z" fill="#1b7a3a"/><ellipse cx="13" cy="13" rx="6" ry="4" fill="rgba(255,255,255,.18)"/>${Math.random() < 0.4 ? '<circle cx="10" cy="9" r="3.2" fill="#ff8fab"/><circle cx="10" cy="9" r="1.3" fill="#ffd166"/>' : ''}</svg>`;
-        lanesEl.insertBefore(pad, lanesEl.firstChild);
+        worldEl.insertBefore(pad, worldEl.firstChild);
         d.pads.push({ p, el: pad });
       }
       if (currentLanes.has(i)) {
-        const from = rand(0.15, 0.45), len = rand(0.15, 0.25);
+        const from = rand(0.15, 0.45), len = clamp(rand(0.35, 0.5) * pond.clientWidth / L, 0.04, 0.25);
         const cur = document.createElement('div');
         cur.className = 'current';
         cur.style.setProperty('--h', Math.round(d.size * 0.55) + 'px');
         cur.style.left = (from * L + d.size * 0.3) + 'px';
         cur.style.width = (len * L) + 'px';
         cur.style.top = (cy - d.size * 0.1) + 'px';
-        lanesEl.insertBefore(cur, lanesEl.firstChild);
+        worldEl.insertBefore(cur, worldEl.firstChild);
         d.current = { from, to: from + len, el: cur };
       }
     });
@@ -865,7 +911,9 @@ Zoe</textarea>
     updateBoard(true);
 
     const L = trackLength();
+    placeTrack(L);
     placeHazards(L);
+    setCamera(0);
     if (ducks.some(d => d.design.legendary)) commentary.say('legend', '', { force: true });
 
     await unlocking;
@@ -888,7 +936,7 @@ Zoe</textarea>
       d.mult = rand(0.9, 1.02);
       d.phases = [rand(0, 6.28), rand(0, 6.28), rand(0, 6.28)];
       d.freqs = [rand(0.6, 1.2) * tf, rand(1.6, 2.8) * tf, rand(3.5, 6) * tf];
-      d.amps = [rand(0.55, 0.8), rand(0.2, 0.35), rand(0.08, 0.15)];
+      d.amps = [rand(0.35, 0.55), rand(0.15, 0.25), rand(0.05, 0.1)];
       d.bursts = [rand(0.1, 0.9), rand(0.1, 0.9), rand(0.1, 0.9)];
       d.burstDone = new Set();
       d.nextQuack = rand(600, 3500);                 // race-time ms until this duck next quacks
@@ -903,6 +951,7 @@ Zoe</textarea>
     let saidHalf = false, saidStretch = false;
     let lastSplash = 0;
     let lastQuack = 0;
+    let leadX = 0;
     const replay = [];                // recorded frames for a photo-finish replay
     let photoFinish = false;
     const winner = ducks[winnerIdx];
@@ -952,14 +1001,14 @@ Zoe</textarea>
           const pad = d.pads[pi];
           if (!d.hitPads.has(pi) && bill >= pad.p - 4 / L) {
             d.hitPads.add(pi);
-            d.slowUntil = elapsed + 550;
+            d.slowUntil = elapsed + 450;
             pad.el.classList.remove('hit'); void pad.el.offsetWidth; pad.el.classList.add('hit');
             sound.plop();
             commentary.say('pad', d.name, { minGap: 900 });
           }
         }
         const slowed = elapsed < d.slowUntil;
-        if (slowed) s *= 0.55;
+        if (slowed) s *= 0.72;
         d.el.classList.toggle('slowed', slowed);
         // Currents: a boost while inside the zone.
         let boosted = false;
@@ -974,17 +1023,23 @@ Zoe</textarea>
         if (d.isWinner) {
           const late = clamp((t - 0.7) / 0.3, 0, 1);
           s += late * late * 1.6;
-        } else if (progress > 0.9) {
-          s *= 0.78;
         }
-        s *= d.mult;
+        // Rubber band: stragglers get a gentle tow so the pack stays on screen.
+        const behind = (leadX - d.x) / pond.clientWidth;
+        if (behind > 0.25) s += clamp((behind - 0.25) * 1.2, 0, 0.5);
+        s = Math.max(0.45, s) * d.mult;     // never stall
         d.x += d.base * s * dt;
       }
 
-      // Hard guarantee: nobody but the winner may cross first.
-      for (const d of ducks) {
-        if (!d.isWinner && !winner.finished && d.x >= L - 2) d.x = L - 2 - rand(0, 4);
+      // Smooth guarantee: a non-winner may lead the winner by at most 60% of the
+      // winner's remaining distance. The allowance shrinks to zero exactly at the
+      // line, so the winner reels everyone in without anyone freezing.
+      if (!winner.finished) {
+        const cap = Math.min(winner.x + 0.6 * (L - winner.x), L - 1);
+        for (const d of ducks) if (!d.isWinner && d.x > cap) d.x = cap;
       }
+      leadX = ducks.reduce((m, d) => Math.max(m, d.x), 0);
+      setCamera(cam + (cameraTarget(L, leadX) - cam) * (1 - Math.exp(-dt / 220)));
 
       // Lead changes, with a little hysteresis so the ticker doesn't flicker.
       const front = ducks.reduce((a, b) => (b.x > a.x ? b : a));
@@ -1001,7 +1056,7 @@ Zoe</textarea>
       if (!saidStretch && t > 0.85) { saidStretch = true; commentary.say('stretch', ''); }
 
       // Record the closing stages for a possible replay.
-      if (t > 0.86 && !winner.finished) replay.push(ducks.map(d => d.x));
+      if (t > 0.86 && !winner.finished) replay.push({ xs: ducks.map(d => d.x), cam });
 
       for (const d of ducks) {
         if (!d.finished && d.x >= L) {
@@ -1047,6 +1102,7 @@ Zoe</textarea>
   // Slow-motion replay of the recorded closing frames, then snap back to the result.
   function playReplay(frames, done) {
     const finalX = ducks.map(d => d.x);
+    const finalCam = cam;
     photoEl.classList.add('show');
     pond.classList.add('slowmo');
     pond.classList.remove('flashcam'); void pond.offsetWidth; pond.classList.add('flashcam');
@@ -1056,10 +1112,12 @@ Zoe</textarea>
     activeLoop = function step() {
       if (paused) return;
       const f = frames[Math.floor(idx)];
-      ducks.forEach((d, i) => { d.el.style.transform = `translate3d(${f[i]}px,0,0)`; });
+      setCamera(f.cam);
+      ducks.forEach((d, i) => { d.el.style.transform = `translate3d(${f.xs[i]}px,0,0)`; });
       idx += speed;
       if (idx < frames.length) rafId = requestAnimationFrame(activeLoop);
       else {
+        setCamera(finalCam);
         ducks.forEach((d, i) => { d.x = finalX[i]; d.el.style.transform = `translate3d(${finalX[i]}px,0,0)`; d.el.classList.remove('swimming'); });
         pond.classList.remove('flashcam'); void pond.offsetWidth; pond.classList.add('flashcam');
         sound.shutter();

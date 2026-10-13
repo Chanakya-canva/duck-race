@@ -14,7 +14,12 @@ page can be hosted anywhere and embedded in a Canva Website.
 - **Race timer** – set how long the race takes (default 30 s, range 5–300 s).
 - **Fair random winner** – a winner is drawn at random before the race starts.
   Each duck's speed is then built from layered sine noise plus random bursts,
-  so ducks surge, slump and swap places many times before the finish.
+  so ducks surge, slump and swap places many times before the finish. Nobody
+  ever stops: speed has a floor, stragglers get a gentle tow, and the winner
+  reels the pack in through a shrinking "lead allowance" rather than a freeze.
+- **Scrolling camera** – the track is longer than the pond and the view follows
+  the pack, so the start line drops away and the finish only appears for the
+  final stretch. On-screen speed stays similar whatever the race time.
 - **Lily pads & currents** – toggleable (default on). Lily pads briefly slow a
   duck, currents speed one up. They only ever sit in the first 70% of the
   track, so they add drama without changing who wins.
